@@ -81,7 +81,7 @@ class SpectralMaskImt(SpectralMask):
             # Table 8
             mask_dbm = np.array([-5, -13, self.spurious_emissions])
             
-        elif self.sta_type is StationType.IMT_BS and self.scenario is "INDOOR":             
+        elif self.sta_type is StationType.IMT_BS and self.scenario == "INDOOR":             
             # Table 1
             mask_dbm = np.array([-5, -13, self.spurious_emissions])
             
@@ -113,7 +113,7 @@ class SpectralMaskImt(SpectralMask):
                                           self.spurious_emissions])
             else:
                 # Dummy spectral mask, for testing purposes only
-                mask_dbm = np.array([-10, -20, -50])
+                mask_dbm = np.array([-10, -20, -13])
                  
         self.mask_dbm = np.concatenate((mask_dbm[::-1],np.array([self.p_tx]),
                                         mask_dbm))
@@ -124,9 +124,9 @@ if __name__ == '__main__':
     p_tx = 25.1
     freq = 43000
     band = 200
-    
+    spurious_emissions= -13
     # Create mask
-    msk = SpectralMaskImt(sta_type,freq,band)
+    msk = SpectralMaskImt(sta_type,freq,band, spurious_emissions= -13)
     msk.set_mask(p_tx)
     
     # Frequencies
