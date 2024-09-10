@@ -20,6 +20,8 @@ from sharc.parameters.parameters_fss_es import ParametersFssEs
 from sharc.parameters.parameters_haps import ParametersHaps
 from sharc.parameters.parameters_rns import ParametersRns
 from sharc.parameters.parameters_ras import ParametersRas
+from sharc.parameters.parameters_ntn import ParametersNTN
+from sharc.parameters.constants import EARTH_RADIUS , BOLTZMANN_CONSTANT
 from sharc.station_manager import StationManager
 from sharc.mask.spectral_mask_imt import SpectralMaskImt
 from sharc.antenna.antenna import Antenna
@@ -32,6 +34,7 @@ from sharc.antenna.antenna_rs1813 import AntennaRS1813
 from sharc.antenna.antenna_rs1861_9a import AntennaRS1861_9A
 from sharc.antenna.antenna_rs1861_9b import AntennaRS1861_9B
 from sharc.antenna.antenna_rs1861_9c import AntennaRS1861_9C
+from sharc.antenna.antenna_rs2043 import AntennaRS2043
 from sharc.antenna.antenna_s465 import AntennaS465
 from sharc.antenna.antenna_modified_s465 import AntennaModifiedS465
 from sharc.antenna.antenna_s580 import AntennaS580
@@ -54,20 +57,26 @@ class StationFactory(object):
                                    param_ant: ParametersAntennaImt,
                                    topology: Topology,
                                    random_number_gen: np.random.RandomState):
-        par = param_ant.get_antenna_parameters(StationType.IMT_BS)
+        param_ant = param_ant.get_antenna_parameters(StationType.IMT_BS)
         num_bs = topology.num_base_stations
         imt_base_stations = StationManager(num_bs)
         imt_base_stations.station_type = StationType.IMT_BS
-        # now we set the coordinates
-        imt_base_stations.x = topology.x
-        imt_base_stations.y = topology.y
-        imt_base_stations.azimuth = topology.azimuth
-        imt_base_stations.elevation = -par.downtilt*np.ones(num_bs)
-        if param.topology == 'INDOOR':
-            imt_base_stations.height = topology.height
+        if param.topology == "NTN":
+            imt_base_stations.x = topology.space_station_x * np.ones(num_bs)
+            imt_base_stations.y = topology.space_station_y * np.ones(num_bs)
+            imt_base_stations.height = topology.space_station_z*np.ones(num_bs)
+            imt_base_stations.elevation = topology.elevation
+            imt_base_stations.is_space_station = True
         else:
-            imt_base_stations.height = param.bs_height*np.ones(num_bs)
-
+            imt_base_stations.x = topology.x
+            imt_base_stations.y = topology.y
+            imt_base_stations.elevation = -param_ant.downtilt*np.ones(num_bs)
+            if param.topology == 'INDOOR':
+                imt_base_stations.height = topology.height
+            else:
+                imt_base_stations.height = param.bs_height*np.ones(num_bs)
+        
+        imt_base_stations.azimuth = topology.azimuth
         imt_base_stations.active = random_number_gen.rand(num_bs) < param.bs_load_probability
         imt_base_stations.tx_power = param.bs_conducted_power*np.ones(num_bs)
         imt_base_stations.rx_power = dict([(bs, -500 * np.ones(param.ue_k)) for bs in range(num_bs)])
@@ -84,7 +93,7 @@ class StationFactory(object):
 
         for i in range(num_bs):
             imt_base_stations.antenna[i] = \
-            AntennaBeamformingImt(par, imt_base_stations.azimuth[i],\
+            AntennaBeamformingImt(param_ant, imt_base_stations.azimuth[i],\
                                   imt_base_stations.elevation[i])
 
         #imt_base_stations.antenna = [AntennaOmni(0) for bs in range(num_bs)]
@@ -157,7 +166,8 @@ class StationFactory(object):
                                                                                deterministic_cell=True)
             psi = np.degrees(np.arctan((param.bs_height - param.ue_height) / distance))
 
-            imt_ue.azimuth = (azimuth + theta + np.pi/2)
+
+            imt_ue.azimuth = (azimuth + theta + np.pi/2)  
             imt_ue.elevation = elevation + psi
 
 
@@ -411,23 +421,24 @@ class StationFactory(object):
     def generate_fss_space_station(param: ParametersFssSs):
         fss_space_station = StationManager(1)
         fss_space_station.station_type = StationType.FSS_SS
+        fss_space_station.is_space_station = True
 
         # now we set the coordinates according to
         # ITU-R P619-1, Attachment A
 
         # calculate distances to the centre of the Earth
         dist_sat_centre_earth_km = (EARTH_RADIUS + param.altitude)/1000
-        dist_imt_centre_earth_km = (EARTH_RADIUS + param.imt_altitude)/1000
+        dist_imt_centre_earth_km = (EARTH_RADIUS + param.earth_station_alt_m)/1000
 
         # calculate Cartesian coordinates of satellite, with origin at centre of the Earth
         sat_lat_rad = param.lat_deg * np.pi / 180.
-        imt_long_diff_rad = param.imt_long_diff_deg * np.pi / 180.
+        imt_long_diff_rad = param.earth_station_long_diff_deg * np.pi / 180.
         x1 = dist_sat_centre_earth_km * np.cos(sat_lat_rad) * np.cos(imt_long_diff_rad)
         y1 = dist_sat_centre_earth_km * np.cos(sat_lat_rad) * np.sin(imt_long_diff_rad)
         z1 = dist_sat_centre_earth_km * np.sin(sat_lat_rad)
 
         # rotate axis and calculate coordinates with origin at IMT system
-        imt_lat_rad = param.imt_lat_deg * np.pi / 180.
+        imt_lat_rad = param.earth_station_lat_deg * np.pi / 180.
         fss_space_station.x = np.array([x1 * np.sin(imt_lat_rad) - z1 * np.cos(imt_lat_rad)]) * 1000
         fss_space_station.y = np.array([y1]) * 1000
         fss_space_station.height = np.array([(z1 * np.sin(imt_lat_rad) + x1 * np.cos(imt_lat_rad)
@@ -480,12 +491,12 @@ class StationFactory(object):
             fss_earth_station.x = np.array([param.x])
             fss_earth_station.y = np.array([param.y])
         elif param.location.upper() == "CELL":
-            x, y, dummy1, dummy2 = StationFactory.get_random_position(1, topology, random_number_gen,
+            x, y, _, _ = StationFactory.get_random_position(1, topology, random_number_gen,
                                                                       param.min_dist_to_bs, True)
             fss_earth_station.x = np.array(x)
             fss_earth_station.y = np.array(y)
         elif param.location.upper() == "NETWORK":
-            x, y, dummy1, dummy2 = StationFactory.get_random_position(1, topology, random_number_gen,
+            x, y, _, _ = StationFactory.get_random_position(1, topology, random_number_gen,
                                                                       param.min_dist_to_bs, False)
             fss_earth_station.x = np.array(x)
             fss_earth_station.y = np.array(y)
@@ -579,6 +590,7 @@ class StationFactory(object):
         num_haps = 1
         haps = StationManager(num_haps)
         haps.station_type = StationType.HAPS
+        haps.is_space_station = True
 
 #        d = intersite_distance
 #        h = (d/3)*math.sqrt(3)/2
@@ -618,6 +630,7 @@ class StationFactory(object):
         num_rns = 1
         rns = StationManager(num_rns)
         rns.station_type = StationType.RNS
+        rns.is_space_station = True
 
         rns.x = np.array([param.x])
         rns.y = np.array([param.y])
@@ -684,15 +697,28 @@ class StationFactory(object):
     def generate_eess_passive_sensor(param: ParametersEessPassive):
         eess_passive_sensor = StationManager(1)
         eess_passive_sensor.station_type = StationType.EESS_PASSIVE
+        eess_passive_sensor.is_space_station = True
 
         # incidence angle according to Rec. ITU-R RS.1861-0
-        incidence_angle = math.degrees(math.asin(
-                math.sin(math.radians(param.nadir_angle))*(1 + (param.altitude/EARTH_RADIUS))))
-
-        # distance to field of view centre according to Rec. ITU-R RS.1861-0
-        distance = EARTH_RADIUS * \
-                    math.sin(math.radians(incidence_angle - param.nadir_angle)) / \
-                    math.sin(math.radians(param.nadir_angle))
+        if param.distribution_enable:
+            if param.distribution_type == "UNIFORM":
+                param.nadir_angle = np.random.uniform(param.nadir_angle_distribution[0],
+                                                  param.nadir_angle_distribution[1])
+                incidence_angle = math.degrees(math.asin(math.sin(math.radians(param.nadir_angle)) *
+                                                         (1 + (param.altitude / EARTH_RADIUS))))
+                # distance to field of view centre according to Rec. ITU-R RS.1861-0
+                distance = EARTH_RADIUS * \
+                           math.sin(math.radians(incidence_angle - param.nadir_angle)) / \
+                           math.sin(math.radians(param.nadir_angle))
+        else:
+            #print(param.nadir_angle)
+            incidence_angle = math.degrees(math.asin(math.sin(math.radians(param.nadir_angle)) * \
+                                                     (1 + (param.altitude/EARTH_RADIUS))))
+            #print(incidence_angle)
+            # distance to field of view centre according to Rec. ITU-R RS.1861-0
+            distance = EARTH_RADIUS * \
+                        math.sin(math.radians(incidence_angle - param.nadir_angle)) / \
+                        math.sin(math.radians(param.nadir_angle))
 
         # Elevation at ground (centre of the footprint)
         theta_grd_elev = 90 - incidence_angle
@@ -719,6 +745,8 @@ class StationFactory(object):
             eess_passive_sensor.antenna = np.array([AntennaRS1861_9B(param)])
         elif param.antenna_pattern == "ITU-R RS.1861 9c":
             eess_passive_sensor.antenna = np.array([AntennaRS1861_9C()])
+        elif param.antenna_pattern == "ITU-R RS.2043":
+            eess_passive_sensor.antenna = np.array([AntennaRS2043()])
         else:
             sys.stderr.write("ERROR\nInvalid EESS PASSIVE antenna pattern: " + param.antenna_pattern)
             sys.exit(1)
@@ -726,7 +754,7 @@ class StationFactory(object):
         eess_passive_sensor.bandwidth = param.bandwidth
         # Noise temperature is not an input parameter for EESS passive.
         # It is included here to calculate the useless I/N values
-        eess_passive_sensor.noise_temperature = 250
+        eess_passive_sensor.noise_temperature = 500
         eess_passive_sensor.thermal_noise = -500
         eess_passive_sensor.total_interference = -500
 
@@ -788,11 +816,16 @@ class StationFactory(object):
         y = list(y)
 
         # calculate UE azimuth wrt serving BS
-        theta = np.arctan2(y - cell_y, x - cell_x)
+        if topology.is_space_station == False:
+            theta = np.arctan2(y - cell_y, x - cell_x)
 
-        # calculate elevation angle
-        # psi is the vertical angle of the UE wrt the serving BS
-        distance = np.sqrt((cell_x - x) ** 2 + (cell_y - y) ** 2)
+            # calculate elevation angle
+            # psi is the vertical angle of the UE wrt the serving BS
+            distance = np.sqrt((cell_x - x) ** 2 + (cell_y - y) ** 2)
+        else:
+            theta = np.arctan2(y - topology.space_station_y[cell], x - topology.space_station_x[cell])
+            distance = np.sqrt((cell_x - x) ** 2 + (cell_y - y) ** 2 + (topology.bs_height)**2)
+        
 
         return x, y, theta, distance
 

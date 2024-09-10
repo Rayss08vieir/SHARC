@@ -124,9 +124,16 @@ if __name__ == '__main__':
     p_tx = 25.1
     freq = 43000
     band = 200
+        HEAD
     spurious_emissions= -13
     # Create mask
     msk = SpectralMaskImt(sta_type,freq,band, spurious_emissions= -13)
+
+    spurious_emissions_dbm_mhz = -33
+    
+    # Create mask
+    msk = SpectralMaskImt(sta_type,freq,band, spurious_emissions_dbm_mhz)
+        upstream/feat_eess_active
     msk.set_mask(p_tx)
     
     # Frequencies
